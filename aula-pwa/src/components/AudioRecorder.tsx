@@ -45,7 +45,7 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
   
   // Média móvel (rolling average)
   const pitchBufferRef = useRef<number[]>([]);
-  const bufferSize = 8; // Últimos 8 frames
+  const pitchBufferSize = 8; // Últimos 8 frames
   
   // Suavização avançada
   const lastDisplayedPitchRef = useRef<number | null>(null);
@@ -292,7 +292,7 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
           
           // Média móvel (rolling average)
           pitchBufferRef.current.push(pitch);
-          if (pitchBufferRef.current.length > bufferSize) {
+          if (pitchBufferRef.current.length > pitchBufferSize) {
             pitchBufferRef.current.shift();
           }
           
