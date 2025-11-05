@@ -429,7 +429,6 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
       ctx.beginPath();
 
       const history = pitchHistoryRef.current;
-      const stepX = width / maxHistoryLength;
 
       for (let i = 0; i < history.length; i++) {
         const y = frequencyToY(history[i], height);
