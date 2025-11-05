@@ -4,6 +4,7 @@ import styles from './AudioRecorder.module.css';
 interface AudioRecorderProps {}
 
 type RecordingState = 'idle' | 'recording' | 'recorded';
+type CalibrationState = 'calibrating' | 'calibrated';
 
 export const AudioRecorder = ({}: AudioRecorderProps) => {
   const [state, setState] = useState<RecordingState>('idle');
@@ -13,6 +14,8 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
   const [audioLevel, setAudioLevel] = useState(0);
   const [currentPitch, setCurrentPitch] = useState<number | null>(null);
   const [smoothedPitch, setSmoothedPitch] = useState<number | null>(null);
+  const [calibrationState, setCalibrationState] = useState<CalibrationState>('calibrating');
+  const [pitchDirection, setPitchDirection] = useState<'up' | 'down' | 'stable' | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -25,21 +28,39 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
 
-  // Histórico de pitch para desenhar o trail
-  const pitchHistoryRef = useRef<number[]>([]);
-  const maxHistoryLength = 200;
+  // Histórico de pitch para desenhar o trail (com timestamp e fade-out)
+  interface PitchPoint {
+    pitch: number;
+    timestamp: number;
+  }
+  const pitchHistoryRef = useRef<PitchPoint[]>([]);
+  const maxHistoryLength = 300; // ~3 segundos a 60fps
+  
+  // Para calibração automática
+  const calibrationStartTimeRef = useRef<number | null>(null);
+  const calibrationDuration = 3000; // 3 segundos
+  const detectedMinPitchRef = useRef<number | null>(null);
+  const detectedMaxPitchRef = useRef<number | null>(null);
+  const isCalibratingRef = useRef(true);
+  
+  // Média móvel (rolling average)
+  const pitchBufferRef = useRef<number[]>([]);
+  const bufferSize = 8; // Últimos 8 frames
+  
+  // Suavização avançada
+  const lastDisplayedPitchRef = useRef<number | null>(null);
+  const lerpFactor = 0.3; // 0.3 = 30% do novo valor, 70% do anterior
+  const minChangeThreshold = 5; // Hz - só atualiza se mudança > 5Hz
+  
   const isRecordingRef = useRef(false);
   const canvasWidthRef = useRef(800);
-  const canvasHeightRef = useRef(500);
+  const canvasHeightRef = useRef(600);
   
-  // Para suavização temporal
-  const lastPitchRef = useRef<number | null>(null);
-  const smoothingFactor = 0.3; // 0-1, menor = mais suave
-
-  // Limites de detecção de pitch
-  const MIN_PITCH = 80; // Hz - voz grave masculina
-  const MAX_PITCH = 500; // Hz - limite agudo
+  // Limites de detecção de pitch (usados como fallback antes da calibração)
+  const ABSOLUTE_MIN_PITCH = 80; // Hz
+  const ABSOLUTE_MAX_PITCH = 600; // Hz
   const MIN_VOLUME_THRESHOLD = 0.001; // Threshold mínimo para detectar pitch (energia)
+  const CONFIDENCE_THRESHOLD = 0.7; // Threshold de confiança para aceitar detecção
 
   // Redimensionar canvas responsivamente
   useEffect(() => {
@@ -52,7 +73,7 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
 
       const rect = container.getBoundingClientRect();
       const newWidth = Math.min(800, rect.width);
-      const newHeight = Math.max(400, 500);
+      const newHeight = Math.max(500, 600);
       
       canvas.width = newWidth;
       canvas.height = newHeight;
@@ -90,11 +111,11 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
     };
   }, []);
 
-  // Função de autocorrelação para detectar pitch
-  const detectPitch = (buffer: Float32Array, sampleRate: number): number | null => {
+  // Função de autocorrelação melhorada para detectar pitch
+  const detectPitch = (buffer: Float32Array, sampleRate: number): { pitch: number | null; confidence: number } => {
     const bufferLength = buffer.length;
-    const minPeriod = Math.floor(sampleRate / MAX_PITCH); // Período mínimo (agudo)
-    const maxPeriod = Math.floor(sampleRate / MIN_PITCH); // Período máximo (grave)
+    const minPeriod = Math.floor(sampleRate / ABSOLUTE_MAX_PITCH);
+    const maxPeriod = Math.floor(sampleRate / ABSOLUTE_MIN_PITCH);
 
     // Normalizar o buffer (remover DC offset)
     let sum = 0;
@@ -115,7 +136,7 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
     energy = energy / bufferLength;
     
     if (energy < MIN_VOLUME_THRESHOLD) {
-      return null; // Muito baixo para detectar
+      return { pitch: null, confidence: 0 };
     }
 
     // Calcular autocorrelação normalizada
@@ -131,7 +152,6 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
         normalization += normalizedBuffer[i] * normalizedBuffer[i];
       }
 
-      // Normalizar pela autocorrelação em lag 0
       if (normalization > 0) {
         correlation = correlation / normalization;
         
@@ -142,30 +162,33 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
       }
     }
 
-    // Verificar se encontramos uma correlação válida (threshold de 0.3)
-    if (bestPeriod > 0 && maxCorrelation > 0.3) {
+    // Verificar confiança e validade
+    if (bestPeriod > 0 && maxCorrelation > CONFIDENCE_THRESHOLD) {
       const frequency = sampleRate / bestPeriod;
       
-      // Verificar se está na faixa válida
-      if (frequency >= MIN_PITCH && frequency <= MAX_PITCH) {
-        return frequency;
+      if (frequency >= ABSOLUTE_MIN_PITCH && frequency <= ABSOLUTE_MAX_PITCH) {
+        return { pitch: frequency, confidence: maxCorrelation };
       }
     }
 
-    return null;
+    return { pitch: null, confidence: 0 };
   };
 
-  // Converter frequência para posição Y no canvas
+  // Converter frequência para posição Y no canvas (com auto-ajuste)
   const frequencyToY = (frequency: number, canvasHeight: number): number => {
-    // Mapear 80-1000 Hz para 0-100% da altura (invertido: grave embaixo, agudo em cima)
-    const normalized = (frequency - MIN_PITCH) / (MAX_PITCH - MIN_PITCH);
-    // Inverter: 0 (grave) = embaixo, 1 (agudo) = topo
-    return canvasHeight * (1 - normalized);
+    const minPitch = detectedMinPitchRef.current ?? ABSOLUTE_MIN_PITCH;
+    const maxPitch = detectedMaxPitchRef.current ?? ABSOLUTE_MAX_PITCH;
+    
+    // Normalizar entre min e max detectados (10% a 90% da altura)
+    const normalized = (frequency - minPitch) / (maxPitch - minPitch);
+    // Clamp entre 0 e 1
+    const clamped = Math.max(0, Math.min(1, normalized));
+    // Mapear para 10% a 90% da altura (invertido: grave embaixo, agudo em cima)
+    return canvasHeight * (0.9 - (clamped * 0.8));
   };
 
   // Obter nota musical aproximada
   const getMusicalNote = (frequency: number): string => {
-    // Frequências de referência (A4 = 440 Hz)
     const A4 = 440;
     const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
     
@@ -198,14 +221,16 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
       const analyser = audioContext.createAnalyser();
       
       analyser.fftSize = 4096;
-      analyser.smoothingTimeConstant = 0.3;
+      analyser.smoothingTimeConstant = 0.85; // Aumentado para reduzir oscilação
+      analyser.minDecibels = -100;
+      analyser.maxDecibels = -30;
       
-      // Criar ScriptProcessorNode para análise de pitch (autocorrelação precisa de dados no tempo)
+      // Criar ScriptProcessorNode para análise de pitch
       const bufferSize = 4096;
       const scriptProcessor = audioContext.createScriptProcessor(bufferSize, 1, 1);
       scriptProcessorRef.current = scriptProcessor;
 
-      // Criar um GainNode com volume 0 para evitar feedback (não precisamos ouvir o áudio processado)
+      // Criar um GainNode com volume 0 para evitar feedback
       const gainNode = audioContext.createGain();
       gainNode.gain.value = 0;
 
@@ -216,6 +241,16 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
 
       analyserRef.current = analyser;
 
+      // Reset calibração
+      setCalibrationState('calibrating');
+      isCalibratingRef.current = true;
+      calibrationStartTimeRef.current = Date.now();
+      detectedMinPitchRef.current = null;
+      detectedMaxPitchRef.current = null;
+      pitchHistoryRef.current = [];
+      pitchBufferRef.current = [];
+      lastDisplayedPitchRef.current = null;
+
       // Processar áudio para detecção de pitch
       scriptProcessor.onaudioprocess = (event) => {
         if (!isRecordingRef.current) return;
@@ -224,35 +259,104 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
         const inputData = inputBuffer.getChannelData(0);
         
         // Detectar pitch usando autocorrelação
-        const pitch = detectPitch(inputData, audioContext.sampleRate);
+        const { pitch, confidence } = detectPitch(inputData, audioContext.sampleRate);
         
-        if (pitch !== null) {
+        if (pitch !== null && confidence >= CONFIDENCE_THRESHOLD) {
           setCurrentPitch(pitch);
           
-          // Suavização temporal
-          if (lastPitchRef.current !== null) {
-            const smoothed = lastPitchRef.current * (1 - smoothingFactor) + pitch * smoothingFactor;
-            setSmoothedPitch(smoothed);
-            lastPitchRef.current = smoothed;
+          // Fase de calibração (primeiros 3 segundos)
+          const now = Date.now();
+          const isCalibrating = isCalibratingRef.current && calibrationStartTimeRef.current && 
+            (now - calibrationStartTimeRef.current) < calibrationDuration;
+          
+          if (isCalibrating) {
+            // Atualizar min/max durante calibração
+            if (detectedMinPitchRef.current === null || pitch < detectedMinPitchRef.current) {
+              detectedMinPitchRef.current = pitch;
+            }
+            if (detectedMaxPitchRef.current === null || pitch > detectedMaxPitchRef.current) {
+              detectedMaxPitchRef.current = pitch;
+            }
+          } else if (isCalibratingRef.current) {
+            // Finalizar calibração
+            isCalibratingRef.current = false;
+            setCalibrationState('calibrated');
+            // Garantir um range mínimo
+            if (detectedMaxPitchRef.current && detectedMinPitchRef.current && 
+                detectedMaxPitchRef.current - detectedMinPitchRef.current < 50) {
+              const center = (detectedMinPitchRef.current + detectedMaxPitchRef.current) / 2;
+              detectedMinPitchRef.current = Math.max(ABSOLUTE_MIN_PITCH, center - 50);
+              detectedMaxPitchRef.current = Math.min(ABSOLUTE_MAX_PITCH, center + 50);
+            }
+          }
+          
+          // Média móvel (rolling average)
+          pitchBufferRef.current.push(pitch);
+          if (pitchBufferRef.current.length > bufferSize) {
+            pitchBufferRef.current.shift();
+          }
+          
+          const averagePitch = pitchBufferRef.current.reduce((a, b) => a + b, 0) / pitchBufferRef.current.length;
+          
+          // Aplicar lerp (interpolação linear)
+          let smoothed: number;
+          if (lastDisplayedPitchRef.current !== null) {
+            // Só atualizar se mudança > threshold
+            const change = Math.abs(averagePitch - lastDisplayedPitchRef.current);
             
-            // Adicionar ao histórico
-            pitchHistoryRef.current.push(smoothed);
-            if (pitchHistoryRef.current.length > maxHistoryLength) {
-              pitchHistoryRef.current.shift();
+            if (change > minChangeThreshold) {
+              smoothed = lastDisplayedPitchRef.current * (1 - lerpFactor) + averagePitch * lerpFactor;
+            } else {
+              // Mudança pequena: suavizar mais
+              smoothed = lastDisplayedPitchRef.current * 0.9 + averagePitch * 0.1;
             }
           } else {
-            setSmoothedPitch(pitch);
-            lastPitchRef.current = pitch;
-            pitchHistoryRef.current.push(pitch);
+            smoothed = averagePitch;
+          }
+          
+          setSmoothedPitch(smoothed);
+          lastDisplayedPitchRef.current = smoothed;
+          
+          // Detectar direção
+          if (lastDisplayedPitchRef.current !== null) {
+            const diff = smoothed - lastDisplayedPitchRef.current;
+            if (Math.abs(diff) > 2) {
+              setPitchDirection(diff > 0 ? 'up' : 'down');
+            } else {
+              setPitchDirection('stable');
+            }
+          }
+          
+          // Adicionar ao histórico com timestamp
+          pitchHistoryRef.current.push({
+            pitch: smoothed,
+            timestamp: now
+          });
+          
+          // Limitar histórico e remover pontos muito antigos
+          const maxAge = 3000; // 3 segundos
+          pitchHistoryRef.current = pitchHistoryRef.current.filter(
+            point => (now - point.timestamp) < maxAge
+          );
+          
+          if (pitchHistoryRef.current.length > maxHistoryLength) {
+            pitchHistoryRef.current.shift();
           }
         } else {
-          // Sem pitch detectado (silêncio ou muito baixo)
+          // Sem pitch detectado
           setCurrentPitch(null);
-          if (lastPitchRef.current !== null) {
+          if (lastDisplayedPitchRef.current !== null) {
             // Fade out gradual
-            lastPitchRef.current = null;
-            setSmoothedPitch(null);
+            const faded = lastDisplayedPitchRef.current * 0.95;
+            if (faded > 10) {
+              setSmoothedPitch(faded);
+              lastDisplayedPitchRef.current = faded;
+            } else {
+              setSmoothedPitch(null);
+              lastDisplayedPitchRef.current = null;
+            }
           }
+          setPitchDirection(null);
         }
       };
 
@@ -262,8 +366,6 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
       });
 
       audioChunksRef.current = [];
-      pitchHistoryRef.current = [];
-      lastPitchRef.current = null;
 
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
@@ -279,7 +381,6 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
         setAudioUrl(url);
         setState('recorded');
         
-        // Parar stream e processamento
         if (streamRef.current) {
           streamRef.current.getTracks().forEach(track => track.stop());
         }
@@ -344,8 +445,15 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
     setAudioLevel(0);
     setCurrentPitch(null);
     setSmoothedPitch(null);
+    setCalibrationState('calibrating');
+    isCalibratingRef.current = true;
+    setPitchDirection(null);
     pitchHistoryRef.current = [];
-    lastPitchRef.current = null;
+    pitchBufferRef.current = [];
+    lastDisplayedPitchRef.current = null;
+    detectedMinPitchRef.current = null;
+    detectedMaxPitchRef.current = null;
+    calibrationStartTimeRef.current = null;
     
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
@@ -363,6 +471,17 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
     if (scriptProcessorRef.current) {
       scriptProcessorRef.current.disconnect();
     }
+  };
+
+  const recalibrate = () => {
+    setCalibrationState('calibrating');
+    isCalibratingRef.current = true;
+    calibrationStartTimeRef.current = Date.now();
+    detectedMinPitchRef.current = null;
+    detectedMaxPitchRef.current = null;
+    pitchHistoryRef.current = [];
+    pitchBufferRef.current = [];
+    lastDisplayedPitchRef.current = null;
   };
 
   const startVisualization = () => {
@@ -403,10 +522,21 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
   ) => {
     const width = canvas.width;
     const height = canvas.height;
+    const now = Date.now();
 
     // Background em uma cor só
     ctx.fillStyle = '#1e293b'; // Cinza escuro
     ctx.fillRect(0, 0, width, height);
+
+    // Linha central de referência (50%)
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(0, height / 2);
+    ctx.lineTo(width, height / 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
 
     // Desenhar grid de referência
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
@@ -422,26 +552,39 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
       ctx.stroke();
     });
 
-    // Desenhar trail/histórico da linha de pitch
+    // Desenhar trail/histórico com fade-out gradual
     if (pitchHistoryRef.current.length > 1) {
-      ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)'; // Vermelho semi-transparente
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-
       const history = pitchHistoryRef.current;
-
-      for (let i = 0; i < history.length; i++) {
-        const y = frequencyToY(history[i], height);
-        const x = (i / maxHistoryLength) * width;
-
-        if (i === 0) {
-          ctx.moveTo(x, y);
-        } else {
-          ctx.lineTo(x, y);
-        }
+      
+      for (let i = 0; i < history.length - 1; i++) {
+        const point1 = history[i];
+        const point2 = history[i + 1];
+        
+        // Calcular opacidade baseada na idade (mais antigo = mais transparente)
+        const age = now - point1.timestamp;
+        const maxAge = 3000; // 3 segundos
+        const opacity = Math.max(0, 1 - (age / maxAge)) * 0.6;
+        
+        // Gradiente roxo → rosa baseado na posição
+        const y1 = frequencyToY(point1.pitch, height);
+        const y2 = frequencyToY(point2.pitch, height);
+        const normalizedY = (y1 / height);
+        
+        // Interpolar entre roxo e rosa
+        const r = Math.floor(168 + (255 - 168) * normalizedY);
+        const g = Math.floor(85 + (192 - 85) * normalizedY);
+        const b = Math.floor(247 + (203 - 247) * normalizedY);
+        
+        ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${opacity})`;
+        ctx.lineWidth = 2;
+        
+        ctx.beginPath();
+        const x1 = (i / maxHistoryLength) * width;
+        const x2 = ((i + 1) / maxHistoryLength) * width;
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
       }
-
-      ctx.stroke();
     }
 
     // Desenhar linha principal de pitch (se houver)
@@ -484,7 +627,7 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Calcular posição Y atual para labels (usar altura do canvas se disponível)
+  // Calcular posição Y atual para labels
   const canvasHeight = canvasRef.current?.height || canvasHeightRef.current;
   const currentY = smoothedPitch !== null ? frequencyToY(smoothedPitch, canvasHeight) : null;
 
@@ -493,7 +636,8 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
       <div className={styles.infoSection}>
         <h2 className={styles.title}>Detecção de Pitch (Tom da Voz)</h2>
         <p className={styles.description}>
-          Cante "aaaaaa" mudando do grave ao agudo (até 500 Hz) para ver a linha vermelha acompanhar o tom da sua voz em tempo real.
+          Fale "zzzzzz" contínuo e vá subindo o tom (grave→agudo) e descendo (agudo→grave). 
+          A linha vermelha acompanhará o movimento vocal de forma suave.
         </p>
       </div>
 
@@ -516,6 +660,13 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
         </div>
       )}
 
+      {/* Mensagem de calibração */}
+      {state === 'recording' && calibrationState === 'calibrating' && (
+        <div className={styles.calibrationBox}>
+          <p>🎯 <strong>Calibrando...</strong> Fale "aaaa" do grave ao agudo para calibrar o range da sua voz.</p>
+        </div>
+      )}
+
       <div className={styles.recorderSection}>
         {/* Canvas para visualização de pitch */}
         <div className={styles.canvasContainer}>
@@ -523,21 +674,33 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
             ref={canvasRef}
             className={styles.canvas}
             width={800}
-            height={500}
+            height={600}
           />
           
           {/* Labels laterais de frequência */}
           <div className={styles.frequencyLabels}>
             <div className={styles.labelTop}>
               <span className={styles.labelText}>AGUDO ↑</span>
-              <span className={styles.labelFreq}>500 Hz</span>
+              <span className={styles.labelFreq}>
+                {calibrationState === 'calibrated' && detectedMaxPitchRef.current 
+                  ? `${Math.round(detectedMaxPitchRef.current)} Hz`
+                  : '500 Hz'}
+              </span>
             </div>
             <div className={styles.labelMiddle}>
-              <span className={styles.labelFreq}>290 Hz</span>
+              <span className={styles.labelFreq}>
+                {calibrationState === 'calibrated' && detectedMinPitchRef.current && detectedMaxPitchRef.current
+                  ? `${Math.round((detectedMinPitchRef.current + detectedMaxPitchRef.current) / 2)} Hz`
+                  : '290 Hz'}
+              </span>
             </div>
             <div className={styles.labelBottom}>
               <span className={styles.labelText}>GRAVE ↓</span>
-              <span className={styles.labelFreq}>80 Hz</span>
+              <span className={styles.labelFreq}>
+                {calibrationState === 'calibrated' && detectedMinPitchRef.current
+                  ? `${Math.round(detectedMinPitchRef.current)} Hz`
+                  : '80 Hz'}
+              </span>
             </div>
           </div>
 
@@ -555,6 +718,11 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
               <span className={styles.pitchNote}>
                 {getMusicalNote(smoothedPitch)}
               </span>
+              {pitchDirection && (
+                <span className={styles.pitchDirection}>
+                  {pitchDirection === 'up' ? '↗' : pitchDirection === 'down' ? '↘' : '→'}
+                </span>
+              )}
             </div>
           )}
 
@@ -564,6 +732,9 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
               <div className={styles.timeContainer}>
                 <span className={styles.micStatus}>🎤 Ativo</span>
                 <span className={styles.timeDisplay}>{formatTime(recordingTime)}</span>
+                {calibrationState === 'calibrating' && (
+                  <span className={styles.calibrationStatus}>Calibrando...</span>
+                )}
               </div>
             )}
             {state === 'idle' && (
@@ -616,6 +787,16 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
                 <span>Parar Gravação</span>
                 <span className={styles.time}>{formatTime(recordingTime)}</span>
               </button>
+              {calibrationState === 'calibrated' && (
+                <button
+                  onClick={recalibrate}
+                  className={`${styles.recordButton} ${styles.recalibrateButton}`}
+                  aria-label="Recalibrar"
+                >
+                  <span className={styles.buttonEmoji}>🔄</span>
+                  <span>Recalibrar</span>
+                </button>
+              )}
             </>
           )}
 
@@ -664,11 +845,12 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
         <h3>Instruções:</h3>
         <ul>
           <li>Clique em "🎤 Iniciar Gravação" para começar</li>
-          <li>Cante "aaaaaa" começando grave e subindo → a linha deve SUBIR continuamente</li>
-          <li>Fale "oooo" mantendo tom constante → a linha deve ficar ESTÁVEL</li>
-          <li>Cante uma escala musical → a linha deve subir/descer claramente em degraus</li>
-          <li>O mesmo fonema ("iii") mostrará diferença entre grave (linha embaixo) e agudo (linha no topo)</li>
-          <li>Clique em "⏹️ Parar Gravação" quando terminar</li>
+          <li>Nos primeiros 3 segundos, fale "aaaa" do grave ao agudo para calibrar</li>
+          <li>Depois, fale "zzzzzz" contínuo e vá subindo/descendo o tom → a linha deve desenhar uma CURVA SUAVE</li>
+          <li>Tom constante → linha deve ficar ESTÁVEL (sem tremer)</li>
+          <li>Subindo gradualmente → linha deve SUBIR SUAVEMENTE</li>
+          <li>Descendo gradualmente → linha deve DESCER SUAVEMENTE</li>
+          <li>Use "🔄 Recalibrar" se quiser ajustar o range novamente</li>
         </ul>
       </div>
     </div>
