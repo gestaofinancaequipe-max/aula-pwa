@@ -1,8 +1,7 @@
 {
-  "buildCommand": "npm install && npm run build",
-  "outputDirectory": "dist",
-  "devCommand": "npm run dev",
-  "installCommand": "npm install",
+  "buildCommand": "cd aula-pwa && npm install && npm run build",
+  "outputDirectory": "aula-pwa/dist",
+  "installCommand": "cd aula-pwa && npm install",
   "framework": "vite",
   "rewrites": [
     {
