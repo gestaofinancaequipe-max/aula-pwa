@@ -6,7 +6,7 @@ export const Home = () => {
   return (
     <div className={styles.container}>
       <div className={styles.hero}>
-        <h1 className={styles.title}>Bem-vindo ao Aula PWA!</h1>
+        <h1 className={styles.title}>Bem vindo Mente Comunicativa</h1>
         <p className={styles.subtitle}>
           Explore nossa coleção de aulas e aprenda no seu próprio ritmo
         </p>
