@@ -56,10 +56,11 @@
   position: relative;
   width: 100%;
   margin-bottom: 1.5rem;
-  background: #1e1b4b;
+  background: #000033;
   border-radius: 12px;
   overflow: hidden;
   border: 2px solid var(--border);
+  min-height: 300px;
 }
 
 .canvas {
@@ -82,21 +83,57 @@
   bottom: 0;
   left: 0;
   right: 0;
-  background: linear-gradient(to top, rgba(30, 27, 75, 0.9), transparent);
+  background: linear-gradient(to top, rgba(0, 0, 51, 0.95), transparent);
   padding: 1rem;
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-end;
   color: white;
   font-size: 0.875rem;
   font-weight: 600;
 }
 
+.frequencyLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  align-items: flex-start;
+}
+
+.freqTop,
+.freqBottom {
+  font-size: 0.75rem;
+  opacity: 0.8;
+}
+
+.freqMiddle {
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.timeContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
 .timeDisplay {
   background: var(--primary-purple);
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  font-family: 'Courier New', monospace;
+  font-size: 1rem;
+  font-weight: 700;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.micStatus {
+  background: rgba(255, 255, 255, 0.2);
   padding: 0.25rem 0.75rem;
   border-radius: 6px;
-  font-family: 'Courier New', monospace;
+  font-size: 0.875rem;
+  backdrop-filter: blur(4px);
 }
 
 .audioLevelContainer {
@@ -126,6 +163,7 @@
   font-size: 0.875rem;
   color: var(--text-secondary);
   font-weight: 600;
+  text-align: center;
 }
 
 .controls {
@@ -150,18 +188,26 @@
   position: relative;
   min-width: 280px;
   box-shadow: 0 4px 12px var(--shadow);
+  touch-action: manipulation; /* Melhor para mobile */
+}
+
+@media (max-width: 768px) {
+  .recordButton {
+    min-width: 100%;
+    padding: 1rem 1.5rem;
+    font-size: 1rem;
+  }
 }
 
 .recordButton.idle {
-  background: var(--primary-purple);
+  background: #6b7280;
   color: white;
 }
 
 .recordButton.idle:hover {
-  background: var(--primary-purple-dark);
-  transform: translateY(-2px);
-  box-shadow: 0 6px 16px var(--shadow-hover);
+  background: #4b5563;
 }
+
 
 .recordButton.recording {
   background: #ef4444;
@@ -173,16 +219,7 @@
   background: #dc2626;
 }
 
-.recordButton.recorded {
-  background: #10b981;
-  color: white;
-}
 
-.recordButton.recorded:hover {
-  background: #059669;
-  transform: translateY(-2px);
-  box-shadow: 0 6px 16px var(--shadow-hover);
-}
 
 @keyframes pulse {
   0%, 100% {
@@ -216,10 +253,9 @@
   }
 }
 
-.micIcon,
-.stopIcon {
-  width: 24px;
-  height: 24px;
+.buttonEmoji {
+  font-size: 1.5rem;
+  line-height: 1;
   flex-shrink: 0;
 }
 
@@ -235,6 +271,31 @@
   flex-direction: column;
   gap: 1.5rem;
   align-items: center;
+}
+
+.recordedButtons {
+  display: flex;
+  gap: 1rem;
+  width: 100%;
+  max-width: 600px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.clearButton {
+  background: var(--primary-purple);
+  flex: 1;
+  min-width: 200px;
+}
+
+.playButton {
+  background: #10b981;
+  flex: 1;
+  min-width: 200px;
+}
+
+.playButton:hover {
+  background: #059669;
 }
 
 .audioPlayer {
@@ -306,12 +367,6 @@
     padding: 1.5rem;
   }
 
-  .recordButton {
-    min-width: 100%;
-    padding: 1rem 1.5rem;
-    font-size: 1rem;
-  }
-
   .canvasLabel {
     font-size: 0.75rem;
     padding: 0.75rem;
@@ -319,5 +374,29 @@
 
   .instructions {
     padding: 1.25rem;
+  }
+
+  .recordedButtons {
+    flex-direction: column;
+  }
+
+  .clearButton,
+  .playButton {
+    min-width: 100%;
+  }
+
+  .freqTop,
+  .freqBottom,
+  .freqMiddle {
+    font-size: 0.7rem;
+  }
+
+  .timeDisplay {
+    font-size: 0.875rem;
+    padding: 0.375rem 0.75rem;
+  }
+
+  .micStatus {
+    font-size: 0.75rem;
   }
 }

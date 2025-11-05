@@ -23,8 +23,10 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
 
   // Espectrograma - histórico de frequências ao longo do tempo
   const spectrogramHistoryRef = useRef<Uint8Array[]>([]);
-  const maxHistoryLength = 200; // Número de frames de histórico
+  const maxHistoryLength = 400; // Número de frames de histórico (mais para scroll horizontal)
   const isRecordingRef = useRef(false);
+  const canvasWidthRef = useRef(800);
+  const canvasHeightRef = useRef(400);
 
   // Redimensionar canvas responsivamente
   useEffect(() => {
@@ -36,8 +38,14 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
       if (!container) return;
 
       const rect = container.getBoundingClientRect();
-      canvas.width = Math.min(800, rect.width);
-      canvas.height = Math.min(400, (rect.width / 800) * 400);
+      const newWidth = Math.min(800, rect.width);
+      const newHeight = Math.max(300, Math.min(400, (rect.width / 800) * 400));
+      
+      canvas.width = newWidth;
+      canvas.height = newHeight;
+      
+      canvasWidthRef.current = newWidth;
+      canvasHeightRef.current = newHeight;
     };
 
     resizeCanvas();
@@ -81,10 +89,10 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
       const source = audioContext.createMediaStreamSource(stream);
       const analyser = audioContext.createAnalyser();
       
-      analyser.fftSize = 2048;
-      analyser.smoothingTimeConstant = 0.8;
-      analyser.minDecibels = -90;
-      analyser.maxDecibels = -10;
+      analyser.fftSize = 4096; // FFT maior para melhor resolução de frequência
+      analyser.smoothingTimeConstant = 0.3; // Menos suavização para visualização mais precisa
+      analyser.minDecibels = -100;
+      analyser.maxDecibels = -30;
       
       source.connect(analyser);
       analyserRef.current = analyser;
@@ -223,78 +231,108 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
         spectrogramHistoryRef.current.shift();
       }
 
-      // Desenhar espectrograma
-      drawSpectrogram(ctx, canvas, frequencyData);
-      drawFrequencyBars(ctx, canvas, frequencyData);
+      // Desenhar espectrograma (mapa de calor)
+      drawSpectrogram(ctx, canvas);
     };
 
     draw();
   };
 
+  // Função para converter intensidade em cor (mapa de calor)
+  const getHeatmapColor = (intensity: number): string => {
+    // Normalizar intensidade (0-1)
+    const normalized = Math.min(1, Math.max(0, intensity));
+
+    // Gradiente de cores: Azul escuro → Verde/Ciano → Amarelo → Vermelho → Branco
+    if (normalized < 0.2) {
+      // Azul escuro a Azul médio (0-20%)
+      const factor = normalized / 0.2;
+      const r = Math.floor(0 * factor);
+      const g = Math.floor(0 * factor);
+      const b = Math.floor(51 + (100 * factor));
+      return `rgb(${r}, ${g}, ${b})`;
+    } else if (normalized < 0.4) {
+      // Azul a Ciano (20-40%)
+      const factor = (normalized - 0.2) / 0.2;
+      const r = Math.floor(0);
+      const g = Math.floor(100 + (155 * factor));
+      const b = Math.floor(255);
+      return `rgb(${r}, ${g}, ${b})`;
+    } else if (normalized < 0.6) {
+      // Ciano a Verde (40-60%)
+      const factor = (normalized - 0.4) / 0.2;
+      const r = Math.floor(0);
+      const g = Math.floor(255);
+      const b = Math.floor(255 - (255 * factor));
+      return `rgb(${r}, ${g}, ${b})`;
+    } else if (normalized < 0.8) {
+      // Verde a Amarelo (60-80%)
+      const factor = (normalized - 0.6) / 0.2;
+      const r = Math.floor(255 * factor);
+      const g = Math.floor(255);
+      const b = Math.floor(0);
+      return `rgb(${r}, ${g}, ${b})`;
+    } else {
+      // Amarelo a Vermelho a Branco (80-100%)
+      const factor = (normalized - 0.8) / 0.2;
+      if (factor < 0.5) {
+        // Amarelo a Vermelho
+        const subFactor = factor * 2;
+        const r = Math.floor(255);
+        const g = Math.floor(255 - (255 * subFactor));
+        const b = Math.floor(0);
+        return `rgb(${r}, ${g}, ${b})`;
+      } else {
+        // Vermelho a Branco
+        const subFactor = (factor - 0.5) * 2;
+        const r = Math.floor(255);
+        const g = Math.floor(0 + (255 * subFactor));
+        const b = Math.floor(0 + (255 * subFactor));
+        return `rgb(${r}, ${g}, ${b})`;
+      }
+    }
+  };
+
   const drawSpectrogram = (
     ctx: CanvasRenderingContext2D,
-    canvas: HTMLCanvasElement,
-    currentData: Uint8Array
+    canvas: HTMLCanvasElement
   ) => {
     const width = canvas.width;
     const height = canvas.height;
     const historyLength = spectrogramHistoryRef.current.length;
 
-    // Limpar canvas
-    ctx.fillStyle = '#1e1b4b';
+    // Background escuro
+    ctx.fillStyle = '#000033'; // Azul muito escuro
     ctx.fillRect(0, 0, width, height);
 
     if (historyLength === 0) return;
 
-    // Desenhar espectrograma (histórico de frequências)
-    const barWidth = width / historyLength;
+    // Calcular largura de cada coluna
+    const columnWidth = width / maxHistoryLength;
+    const startIndex = Math.max(0, historyLength - maxHistoryLength);
+
+    // Desenhar espectrograma estilo mapa de calor
+    // Eixo X: Tempo (esquerda para direita, scroll horizontal)
+    // Eixo Y: Frequência (0 Hz no topo, ~8000 Hz embaixo)
     
-    for (let i = 0; i < historyLength; i++) {
+    for (let i = startIndex; i < historyLength; i++) {
       const frequencyData = spectrogramHistoryRef.current[i];
-      const x = i * barWidth;
+      const x = (i - startIndex) * columnWidth;
 
-      for (let j = 0; j < frequencyData.length; j += 4) {
+      // Desenhar cada frequência como um pixel vertical
+      // Frequências mais baixas (índices menores) = topo do canvas
+      for (let j = 0; j < frequencyData.length; j++) {
         const value = frequencyData[j];
-        const y = (j / frequencyData.length) * height;
-        const barHeight = height / frequencyData.length;
-
-        // Criar gradiente roxo baseado na intensidade
         const intensity = value / 255;
-        const hue = 260 + (intensity * 40); // 260 (roxo) a 300 (magenta)
-        const saturation = 70 + (intensity * 30);
-        const lightness = 30 + (intensity * 40);
+        
+        // Inverter Y: 0 Hz (topo) até ~8000 Hz (embaixo)
+        const y = (j / frequencyData.length) * height;
+        const pixelHeight = height / frequencyData.length;
 
-        ctx.fillStyle = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
-        ctx.fillRect(x, height - y - barHeight, barWidth, barHeight);
+        // Obter cor do mapa de calor
+        ctx.fillStyle = getHeatmapColor(intensity);
+        ctx.fillRect(x, y, columnWidth, pixelHeight);
       }
-    }
-  };
-
-  const drawFrequencyBars = (
-    ctx: CanvasRenderingContext2D,
-    canvas: HTMLCanvasElement,
-    data: Uint8Array
-  ) => {
-    const width = canvas.width;
-    const height = canvas.height;
-    const barCount = 32; // Reduzir para melhor performance
-    const barWidth = width / barCount;
-    const step = Math.floor(data.length / barCount);
-
-    // Desenhar barras de frequência no topo
-    for (let i = 0; i < barCount; i++) {
-      const dataIndex = i * step;
-      const barHeight = (data[dataIndex] / 255) * (height * 0.3);
-      const x = i * barWidth;
-
-      // Gradiente roxo
-      const gradient = ctx.createLinearGradient(x, height - barHeight, x, height);
-      gradient.addColorStop(0, '#7c3aed');
-      gradient.addColorStop(0.5, '#8b5cf6');
-      gradient.addColorStop(1, '#a78bfa');
-
-      ctx.fillStyle = gradient;
-      ctx.fillRect(x, height - barHeight, barWidth - 2, barHeight);
     }
   };
 
@@ -306,12 +344,12 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
 
   return (
     <div className={styles.container}>
-      <div className={styles.infoSection}>
-        <h2 className={styles.title}>Gravação de Áudio com Espectrograma</h2>
-        <p className={styles.description}>
-          Use o botão abaixo para gravar sua voz. O espectrograma mostrará as frequências em tempo real.
-        </p>
-      </div>
+              <div className={styles.infoSection}>
+          <h2 className={styles.title}>Gravação de Áudio com Espectrograma</h2>
+          <p className={styles.description}>
+            Fale próximo ao microfone para ver as frequências da sua voz em tempo real no mapa de calor.
+          </p>
+        </div>
 
       {error && (
         <div className={styles.errorBox}>
@@ -342,9 +380,19 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
             height={400}
           />
           <div className={styles.canvasLabel}>
-            <span>Frequências (0 - 8000 Hz)</span>
+            <div className={styles.frequencyLabel}>
+              <span className={styles.freqTop}>0 Hz</span>
+              <span className={styles.freqMiddle}>Frequências</span>
+              <span className={styles.freqBottom}>~8000 Hz</span>
+            </div>
             {state === 'recording' && (
-              <span className={styles.timeDisplay}>{formatTime(recordingTime)}</span>
+              <div className={styles.timeContainer}>
+                <span className={styles.micStatus}>🎤 Ativo</span>
+                <span className={styles.timeDisplay}>{formatTime(recordingTime)}</span>
+              </div>
+            )}
+            {state === 'idle' && (
+              <span className={styles.micStatus}>🎤 Inativo</span>
             )}
           </div>
         </div>
@@ -372,20 +420,8 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
               className={`${styles.recordButton} ${styles.idle}`}
               aria-label="Iniciar gravação"
             >
-              <svg
-                className={styles.micIcon}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
-                />
-              </svg>
-              <span>Toque para gravar</span>
+              <span className={styles.buttonEmoji}>🎤</span>
+              <span>Iniciar Gravação</span>
             </button>
           )}
 
@@ -397,14 +433,8 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
                 aria-label="Parar gravação"
               >
                 <div className={styles.recordingPulse} />
-                <svg
-                  className={styles.stopIcon}
-                  fill="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <rect x="6" y="6" width="12" height="12" rx="2" />
-                </svg>
-                <span>Parar gravação</span>
+                <span className={styles.buttonEmoji}>⏹️</span>
+                <span>Parar Gravação</span>
                 <span className={styles.time}>{formatTime(recordingTime)}</span>
               </button>
             </>
@@ -412,26 +442,31 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
 
           {state === 'recorded' && (
             <div className={styles.recordedControls}>
-              <button
-                onClick={clearRecording}
-                className={`${styles.recordButton} ${styles.recorded}`}
-                aria-label="Gravar novamente"
-              >
-                <svg
-                  className={styles.micIcon}
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
+              <div className={styles.recordedButtons}>
+                <button
+                  onClick={clearRecording}
+                  className={`${styles.recordButton} ${styles.clearButton}`}
+                  aria-label="Nova gravação"
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
-                  />
-                </svg>
-                <span>Gravação concluída - Toque para gravar novamente</span>
-              </button>
+                  <span className={styles.buttonEmoji}>🔄</span>
+                  <span>Nova Gravação</span>
+                </button>
+
+                {audioUrl && (
+                  <button
+                    onClick={() => {
+                      if (audioRef.current) {
+                        audioRef.current.play();
+                      }
+                    }}
+                    className={`${styles.recordButton} ${styles.playButton}`}
+                    aria-label="Reproduzir gravação"
+                  >
+                    <span className={styles.buttonEmoji}>▶️</span>
+                    <span>Reproduzir</span>
+                  </button>
+                )}
+              </div>
 
               {audioUrl && (
                 <div className={styles.audioPlayer}>
@@ -449,10 +484,11 @@ export const AudioRecorder = ({}: AudioRecorderProps) => {
       <div className={styles.instructions}>
         <h3>Instruções:</h3>
         <ul>
-          <li>Clique em "Toque para gravar" para iniciar a gravação</li>
-          <li>O espectrograma mostrará as frequências da sua voz em tempo real</li>
-          <li>Clique em "Parar gravação" quando terminar</li>
-          <li>Você pode reproduzir e gravar novamente quantas vezes quiser</li>
+          <li>Clique em "🎤 Iniciar Gravação" para começar</li>
+          <li>Fale próximo ao microfone para ver as frequências no mapa de calor</li>
+          <li>O espectrograma mostra tempo (horizontal) e frequências (vertical)</li>
+          <li>Clique em "⏹️ Parar Gravação" quando terminar</li>
+          <li>Use "▶️ Reproduzir" para ouvir ou "🔄 Nova Gravação" para gravar novamente</li>
         </ul>
       </div>
     </div>
