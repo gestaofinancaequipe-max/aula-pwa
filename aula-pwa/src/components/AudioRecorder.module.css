@@ -1,0 +1,323 @@
+.container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+  animation: fadeIn 0.5s ease-out;
+}
+
+.infoSection {
+  margin-bottom: 2rem;
+  text-align: center;
+}
+
+.title {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 1rem;
+}
+
+.description {
+  font-size: 1.125rem;
+  color: var(--text-secondary);
+  opacity: 0.8;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.errorBox {
+  background: #fee2e2;
+  border: 2px solid #ef4444;
+  border-radius: 12px;
+  padding: 1rem 1.5rem;
+  margin-bottom: 2rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  color: #991b1b;
+}
+
+.errorIcon {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.recorderSection {
+  background: var(--surface);
+  border-radius: 16px;
+  padding: 2rem;
+  box-shadow: 0 4px 12px var(--shadow);
+  margin-bottom: 2rem;
+}
+
+.canvasContainer {
+  position: relative;
+  width: 100%;
+  margin-bottom: 1.5rem;
+  background: #1e1b4b;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 2px solid var(--border);
+}
+
+.canvas {
+  width: 100%;
+  height: auto;
+  display: block;
+  max-height: 400px;
+  min-height: 300px;
+}
+
+@media (max-width: 768px) {
+  .canvas {
+    max-height: 300px;
+    min-height: 250px;
+  }
+}
+
+.canvasLabel {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(to top, rgba(30, 27, 75, 0.9), transparent);
+  padding: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: white;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.timeDisplay {
+  background: var(--primary-purple);
+  padding: 0.25rem 0.75rem;
+  border-radius: 6px;
+  font-family: 'Courier New', monospace;
+}
+
+.audioLevelContainer {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: var(--background);
+  border-radius: 8px;
+}
+
+.audioLevelBar {
+  width: 100%;
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.audioLevelFill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary-purple), var(--primary-purple-light));
+  transition: width 0.1s ease-out;
+  border-radius: 4px;
+}
+
+.audioLevelText {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.recordButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 1.25rem 2rem;
+  border: none;
+  border-radius: 16px;
+  font-size: 1.125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+  min-width: 280px;
+  box-shadow: 0 4px 12px var(--shadow);
+}
+
+.recordButton.idle {
+  background: var(--primary-purple);
+  color: white;
+}
+
+.recordButton.idle:hover {
+  background: var(--primary-purple-dark);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px var(--shadow-hover);
+}
+
+.recordButton.recording {
+  background: #ef4444;
+  color: white;
+  animation: pulse 2s infinite;
+}
+
+.recordButton.recording:hover {
+  background: #dc2626;
+}
+
+.recordButton.recorded {
+  background: #10b981;
+  color: white;
+}
+
+.recordButton.recorded:hover {
+  background: #059669;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px var(--shadow-hover);
+}
+
+@keyframes pulse {
+  0%, 100% {
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    box-shadow: 0 4px 20px rgba(239, 68, 68, 0.6), 0 0 0 8px rgba(239, 68, 68, 0.1);
+  }
+}
+
+.recordingPulse {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 100%;
+  height: 100%;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.2);
+  animation: pulseRing 1.5s infinite;
+}
+
+@keyframes pulseRing {
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1.2);
+    opacity: 0;
+  }
+}
+
+.micIcon,
+.stopIcon {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.time {
+  font-family: 'Courier New', monospace;
+  font-size: 1rem;
+  margin-left: 0.5rem;
+}
+
+.recordedControls {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  align-items: center;
+}
+
+.audioPlayer {
+  width: 100%;
+  max-width: 500px;
+}
+
+.audioElement {
+  width: 100%;
+  margin-bottom: 0.5rem;
+}
+
+.audioHint {
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  opacity: 0.8;
+}
+
+.instructions {
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 1.5rem;
+  box-shadow: 0 2px 8px var(--shadow);
+}
+
+.instructions h3 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 1rem;
+}
+
+.instructions ul {
+  list-style: none;
+  padding: 0;
+}
+
+.instructions li {
+  padding: 0.5rem 0;
+  padding-left: 1.5rem;
+  position: relative;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.instructions li:before {
+  content: '✓';
+  position: absolute;
+  left: 0;
+  color: var(--primary-purple);
+  font-weight: bold;
+}
+
+@media (max-width: 768px) {
+  .container {
+    padding: 1rem;
+  }
+
+  .title {
+    font-size: 1.5rem;
+  }
+
+  .description {
+    font-size: 1rem;
+  }
+
+  .recorderSection {
+    padding: 1.5rem;
+  }
+
+  .recordButton {
+    min-width: 100%;
+    padding: 1rem 1.5rem;
+    font-size: 1rem;
+  }
+
+  .canvasLabel {
+    font-size: 0.75rem;
+    padding: 0.75rem;
+  }
+
+  .instructions {
+    padding: 1.25rem;
+  }
+}
